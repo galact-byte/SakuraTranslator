@@ -10,6 +10,8 @@ namespace SakuraTranslate.Helpers
 {
     internal static class HttpRequestHelper
     {
+        private const string TimeoutMessage = "翻译服务请求超时，请检查后端状态，必要时调整 RequestTimeoutSeconds。";
+
         public static IEnumerator Send(string endpoint, string method, string payload, int timeoutMs, Action<string> completed)
         {
             var request = (HttpWebRequest)WebRequest.Create(endpoint);
@@ -68,7 +70,7 @@ namespace SakuraTranslate.Helpers
             while (!operation.IsCompleted)
             {
                 if (timer.ElapsedMilliseconds >= timeoutMs)
-                    throw new TimeoutException("翻译服务请求超时，请检查后端状态，必要时调整 RequestTimeoutSeconds。");
+                    throw new TimeoutException(TimeoutMessage);
                 yield return null;
             }
         }
@@ -81,6 +83,7 @@ namespace SakuraTranslate.Helpers
                 var response = error.Response as HttpWebResponse;
                 string reason = response == null ? error.Status.ToString() : "HTTP " + (int)response.StatusCode;
                 if (error.Response != null) error.Response.Close();
+                if (error.Status == WebExceptionStatus.Timeout) throw new TimeoutException(TimeoutMessage);
                 throw new InvalidOperationException("翻译服务请求失败（" + reason + "）。请检查服务、Endpoint 地址和后端日志；自动模式需要 /v1/models 接口。");
             }
         }

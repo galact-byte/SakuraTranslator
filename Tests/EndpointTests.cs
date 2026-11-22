@@ -217,6 +217,20 @@ internal static class EndpointTests
                 try { Translate(Initialize(backend)); } catch (InvalidOperationException) { return; }
                 throw new Exception("应明确拒绝异常模型响应");
             });
+        yield return ("原生 HTTP 超时与协程超时使用同一异常类型", () => {
+            using var backend = new LocalBackend { HeaderDelayMs = 500 };
+            var helper = typeof(SakuraTranslateEndpoint).Assembly.GetType("SakuraTranslate.Helpers.HttpRequestHelper");
+            var send = helper.GetMethod("Send", BindingFlags.Public | BindingFlags.Static);
+            var operation = (IEnumerator)send.Invoke(null, new object[] { backend.Endpoint.Replace("/chat/completions", "/models"), "GET", null, 100, (Action<string>)(_ => throw new Exception("慢速请求不应成功")) });
+            try
+            {
+                operation.MoveNext();
+                Thread.Sleep(250);
+                try { operation.MoveNext(); } catch (TimeoutException) { return; }
+                throw new Exception("没有返回统一的超时异常");
+            }
+            finally { ((IDisposable)operation).Dispose(); }
+        });
         foreach (bool bodyOnly in new[] { false, true })
             yield return ("协程超时 " + (bodyOnly ? "正文" : "响应头"), () => {
                 using var backend = new LocalBackend { HeaderDelayMs = bodyOnly ? 0 : 1500, BodyDelayMs = bodyOnly ? 1500 : 0 };
