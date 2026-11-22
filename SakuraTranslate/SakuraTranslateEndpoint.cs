@@ -14,6 +14,10 @@ namespace SakuraTranslate
         private string _endpoint;
         private string _modelName;
         private string _modelVersion;
+        private bool _autoDetectModel;
+        private string _modelsEndpoint;
+        private string _apiModelName = "sukinishiro";
+        private int _requestTimeoutMs = 100000;
         private MaxTokensMode _maxTokensMode;
         private int _staticMaxTokens;
         private double _dynamicMaxTokensMultiplier;

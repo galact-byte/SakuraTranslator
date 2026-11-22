@@ -1,25 +1,79 @@
-name: .NET 3.5 CI
+name: Build and test
 
 on:
   push:
-    branches: [ main ]
+    branches: [master, maintenance/next]
   pull_request:
-    branches: [ main ]
+    branches: [master]
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: "测试、打包成功后发布 Release"
+        type: boolean
+        default: false
+      release_tag:
+        description: "发布标签，必须与项目版本一致"
+        type: string
+        default: "v0.3.11"
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+      - name: Build Mono
+        run: dotnet build SakuraTranslate/SakuraTranslate.csproj -c Release
+      - name: Build and test IL2CPP
+        run: dotnet run --project Tests/Tests.csproj -c IL2CPPRelease
+      - name: Package
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content SakuraTranslate/SakuraTranslate.csproj -Raw
+          $version = $project.SelectSingleNode('//Version').InnerText
+          New-Item dist -ItemType Directory -Force | Out-Null
+          Compress-Archive SakuraTranslate/bin/Release/net3.5/SakuraTranslate.dll "dist/SakuraTranslate-$version-Mono.zip"
+          Compress-Archive SakuraTranslate/bin/IL2CPPRelease/net6.0/SakuraTranslate.dll "dist/SakuraTranslate-$version-IL2CPP.zip"
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-dist
+          path: dist/*
+          if-no-files-found: error
 
-    - name: Enable .NET Framework 3.5
-      run: |
-        dism /online /enable-feature /featurename:NetFX3 /All
-
-    - name: Set up MSBuild path
-      uses: microsoft/setup-msbuild@v1.1
-
-    - name: Build with MSBuild
-      run: msbuild /p:Configuration=Release
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-dist
+          path: dist
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [xml]$project = Get-Content SakuraTranslate/SakuraTranslate.csproj -Raw
+          $version = $project.SelectSingleNode('//Version').InnerText
+          if ($env:RELEASE_TAG -cne "v$version") { throw '发布标签与项目版本不一致' }
+          $assets = @(Get-ChildItem dist -File | ForEach-Object { $_.FullName })
+          gh release create $env:RELEASE_TAG @assets --target $env:GITHUB_SHA --title "SakuraTranslator $env:RELEASE_TAG" --notes-file RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release 发布失败' }

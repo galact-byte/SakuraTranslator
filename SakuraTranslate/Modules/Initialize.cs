@@ -12,12 +12,41 @@ namespace SakuraTranslate
 {
     public partial class SakuraTranslateEndpoint : ITranslateEndpoint
     {
+        private static string NormalizeEndpoint(string value)
+        {
+            Uri uri;
+            if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                throw new ArgumentException("Endpoint 必须是有效的 HTTP/HTTPS 地址，例如 http://127.0.0.1:8080/v1/chat/completions。");
+            var builder = new UriBuilder(uri);
+            string path = builder.Path.TrimEnd('/');
+            if (path.Length == 0) path = "/v1/chat/completions";
+            else if (path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)) path += "/chat/completions";
+            builder.Path = path;
+            return builder.Uri.AbsoluteUri;
+        }
+
         public void Initialize(IInitializationContext context)
         {
-            _endpoint = context.GetOrCreateSetting<string>("Sakura", "Endpoint", "http://127.0.0.1:8080/v1/chat/completions");
-            _modelName = context.GetOrCreateSetting<string>("Sakura", "ModelName", "Sakura");
-            _modelVersion = context.GetOrCreateSetting<string>("Sakura", "ModelVersion", "1.0");
-            _modelType = TranslateModelHelper.GetTranslationModel(_modelName, _modelVersion);
+            _endpoint = NormalizeEndpoint(context.GetOrCreateSetting<string>("Sakura", "Endpoint", "http://127.0.0.1:8080/v1/chat/completions"));
+            _modelName = context.GetOrCreateSetting<string>("Sakura", "ModelName", "Auto").Trim();
+            _modelVersion = context.GetOrCreateSetting<string>("Sakura", "ModelVersion", "Auto").Trim();
+            _autoDetectModel = string.Equals(_modelName, "Auto", StringComparison.OrdinalIgnoreCase);
+            if (_autoDetectModel)
+            {
+                var uri = new UriBuilder(_endpoint);
+                const string completionPath = "/chat/completions";
+                if (!uri.Path.EndsWith(completionPath, StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("自动识别需要 /v1/chat/completions 兼容接口；自定义接口请手动填写 ModelName 与 ModelVersion。");
+                uri.Path = uri.Path.Substring(0, uri.Path.Length - completionPath.Length) + "/models";
+                _modelsEndpoint = uri.Uri.AbsoluteUri;
+            }
+            else _modelType = TranslateModelHelper.GetTranslationModel(_modelName, _modelVersion);
+            int timeoutSeconds;
+            if (!int.TryParse(context.GetOrCreateSetting<string>("Sakura", "RequestTimeoutSeconds", "100"), out timeoutSeconds)
+                || timeoutSeconds <= 0 || timeoutSeconds > int.MaxValue / 1000)
+                throw new ArgumentException("RequestTimeoutSeconds 必须是大于零的有效整数秒数。");
+            _requestTimeoutMs = timeoutSeconds * 1000;
             #region maxTokens
             try
             {

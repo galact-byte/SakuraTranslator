@@ -1,6 +1,7 @@
 ﻿using SakuraTranslate.Models;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using XUnity.AutoTranslator.Plugin.Core.Endpoints;
 using XUnity.AutoTranslator.Plugin.Core.Utilities;
@@ -19,12 +20,12 @@ namespace SakuraTranslate
             prompts.ForEach(p => { sb.Append($"{{\"role\":\"{JsonHelper.Escape(p.Role)}\",\"content\":\"{JsonHelper.Escape(p.Content)}\"}},"); });
             sb.Remove(sb.Length - 1, 1);
             var retStr =
-                $"{{\"model\":\"sukinishiro\"," +
+                $"{{\"model\":\"{JsonHelper.Escape(_apiModelName)}\"," +
                 $"\"messages\":[{sb}]," +
-                $"\"temperature\":{actualTemperature}," +
-                $"\"top_p\":{actualTopP}," +
+                $"\"temperature\":{actualTemperature.ToString(CultureInfo.InvariantCulture)}," +
+                $"\"top_p\":{actualTopP.ToString(CultureInfo.InvariantCulture)}," +
                 $"\"max_tokens\":{maxTokens}," +
-                $"\"frequency_penalty\":{frequencyPenalty}," +
+                $"\"frequency_penalty\":{frequencyPenalty.ToString(CultureInfo.InvariantCulture)}," +
                 $"\"seed\":-1," +
                 $"\"do_sample\":true," +
                 $"\"num_beams\":1," +
@@ -59,7 +60,8 @@ namespace SakuraTranslate
                 case TranslationModel.SakuraV0_10:
                     return MakeSakuraPromptV0_10(line, frequencyPenalty);
                 case TranslationModel.SakuraV1_0:
-                    return MakeSakuraPromptV1_0(line, frequencyPenalty);
+                case TranslationModel.SakuraV1_5:
+                    return MakeSakuraPromptV1(line, frequencyPenalty);
                 case TranslationModel.GalTranslV2_6:
                     return MakeGalTranslPromptV2_6(line, frequencyPenalty);
                 case TranslationModel.GalTranslV3:

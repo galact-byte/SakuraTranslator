@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Configurations>IL2CPPRelease</Configurations>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SakuraTranslate/SakuraTranslate.csproj" />
+    <Reference Include="XUnity.AutoTranslator.Plugin.Core">
+      <HintPath>../Libraries/XUnity.AutoTranslator-Developer-IL2CPP-5.4.4/XUnity.AutoTranslator.Plugin.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="XUnity.Common">
+      <HintPath>../Libraries/XUnity.AutoTranslator-Developer-IL2CPP-5.4.4/XUnity.Common.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

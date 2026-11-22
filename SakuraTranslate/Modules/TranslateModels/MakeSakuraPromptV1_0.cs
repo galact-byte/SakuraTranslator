@@ -6,14 +6,16 @@ namespace SakuraTranslate
 {
     public partial class SakuraTranslateEndpoint : ITranslateEndpoint
     {
-        private string MakeSakuraPromptV1_0(string originalText, double frequencyPenalty = 0)
+        private string MakeSakuraPromptV1(string originalText, double frequencyPenalty = 0)
         {
             var messages = new List<PromptMessage>
             {
                 new PromptMessage
                 {
                     Role = "system",
-                    Content = "你是一个轻小说翻译模型，可以流畅通顺地以日本轻小说的风格将日文翻译成简体中文，并联系上下文正确使用人称代词，不擅自添加原文中没有的代词。"
+                    Content = _modelType == TranslationModel.SakuraV1_5
+                        ? "你是一个日本二次元领域的日语翻译模型，可以流畅通顺地以日本轻小说/漫画/Galgame的风格将日文翻译成简体中文，并联系上下文正确使用人称代词，不擅自添加原文中没有的代词。"
+                        : "你是一个轻小说翻译模型，可以流畅通顺地以日本轻小说的风格将日文翻译成简体中文，并联系上下文正确使用人称代词，不擅自添加原文中没有的代词。"
                 }
             };
 

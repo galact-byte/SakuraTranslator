@@ -1,101 +1,83 @@
-﻿using SakuraTranslate.Helpers;
+using SakuraTranslate.Helpers;
 using SimpleJSON;
+using System;
 using System.Collections;
-using System.IO;
-using System.Net;
-using System.Text;
 using XUnity.AutoTranslator.Plugin.Core.Endpoints;
-using XUnity.AutoTranslator.Plugin.Core.Utilities;
 using XUnity.Common.Logging;
 
 namespace SakuraTranslate
 {
     public partial class SakuraTranslateEndpoint : ITranslateEndpoint
     {
+        private static JSONNode ParseResponse(string text)
+        {
+            JSONNode root;
+            try { root = JSON.Parse(text); }
+            catch (Exception) { throw new InvalidOperationException("翻译服务没有返回有效的 JSON 对象，请检查 Endpoint 和后端日志。"); }
+            if (root == null || !root.IsObject)
+                throw new InvalidOperationException("翻译服务没有返回有效的 JSON 对象，请检查 Endpoint 和后端日志。");
+            return root;
+        }
+
+        private void SelectBackendModel(string response)
+        {
+            var root = ParseResponse(response);
+            var models = root["data"].AsArray;
+            if (models == null || models.Count != 1 || !models[0].IsObject || !models[0]["id"].IsString)
+                throw new InvalidOperationException("自动识别需要后端返回唯一模型；空列表或多模型服务请手动填写 ModelName 与 ModelVersion。");
+            string identifier = models[0]["id"].Value;
+            Models.TranslationModel detected;
+            if (!TranslateModelHelper.TryDetectTranslationModel(identifier, out detected))
+                throw new InvalidOperationException("无法确认后端模型的提示词模板：" + identifier + "。请使用已支持的模型，或手动填写 ModelName 与 ModelVersion。");
+            if (_apiModelName != identifier)
+                XuaLogger.AutoTranslator.Info("SakuraTranslate: 自动识别模型 " + identifier + "，模板 " + detected);
+            _modelType = detected;
+            _apiModelName = identifier;
+        }
+
         public IEnumerator Translate(ITranslationContext context)
         {
-            // 抽取未翻译文本
-            var untranslatedText = context.UntranslatedText;
-
-            if (_debug) { XuaLogger.AutoTranslator.Debug($"SakuraTranslate.Translate: untranslatedText: {untranslatedText}"); }
-
-            double frequencyPenalty = 0;
-            int retryCount = 0;
-            string translatedText = string.Empty;
+            string original = context.UntranslatedText;
+            if (_debug) XuaLogger.AutoTranslator.Debug("SakuraTranslate.Translate: untranslatedText: " + original);
+            double penalty = 0;
+            int retries = 0;
+            string translated = null;
             while (true)
             {
-                // 构建请求JSON
-                string json = MakeRequestJson(untranslatedText, frequencyPenalty);
-                var dataBytes = Encoding.UTF8.GetBytes(json);
-
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(_endpoint);
-                request.Method = "POST";
-                request.ContentType = "application/json";
-                request.ContentLength = dataBytes.Length;
-
-                using (Stream requestStream = request.GetRequestStream())
+                if (_autoDetectModel)
                 {
-                    requestStream.Write(dataBytes, 0, dataBytes.Length);
+                    var discovery = HttpRequestHelper.Send(_modelsEndpoint, "GET", null, _requestTimeoutMs, SelectBackendModel);
+                    try { while (discovery.MoveNext()) yield return discovery.Current; }
+                    finally { (discovery as IDisposable).Dispose(); }
                 }
-
-                var asyncResult = request.BeginGetResponse(null, null);
-
-                // 等待异步操作完成
-                while (!asyncResult.IsCompleted)
+                string responseText = null;
+                var operation = HttpRequestHelper.Send(_endpoint, "POST", MakeRequestJson(original, penalty), _requestTimeoutMs, value => responseText = value);
+                try { while (operation.MoveNext()) yield return operation.Current; }
+                finally { (operation as IDisposable).Dispose(); }
+                if (_debug) XuaLogger.AutoTranslator.Debug("SakuraTranslate.Translate: responseText: " + responseText);
+                var response = ParseResponse(responseText);
+                var choices = response["choices"].AsArray;
+                if (choices == null || choices.Count == 0 || !choices[0].IsObject || !choices[0]["message"].IsObject || !choices[0]["message"]["content"].IsString)
+                    throw new InvalidOperationException("翻译服务没有返回有效的 choices[0].message.content，请检查后端接口和日志。");
+                translated = choices[0]["message"]["content"].Value;
+                if (translated.Trim().Length == 0)
+                    throw new InvalidOperationException("翻译服务返回空译文，请检查后端模型和日志。");
+                int tokens;
+                bool capped = (int.TryParse(response["usage"]["completion_tokens"].Value, out tokens) && tokens >= GetMaxTokens(original))
+                    || choices[0]["finish_reason"].Value == "length";
+                if (!_fixDegeneration || !capped) break;
+                if (retries >= DEGENERATION_MAX_RETRIES)
                 {
-                    yield return null;
+                    XuaLogger.AutoTranslator.Warn("SakuraTranslate: 达到最大退化重试次数，保留最后一次译文。");
+                    break;
                 }
-
-                string responseText;
-                using (WebResponse response = request.EndGetResponse(asyncResult))
-                {
-                    using (Stream responseStream = response.GetResponseStream())
-                    {
-                        using (StreamReader reader = new StreamReader(responseStream))
-                        {
-                            responseText = reader.ReadToEnd();
-                        }
-                    }
-                }
-
-                if (_debug) { XuaLogger.AutoTranslator.Debug($"SakuraTranslate.Translate: responseText: {responseText}"); }
-
-                var jsonResponse = JSON.Parse(responseText);
-                int completionTokens = int.Parse(jsonResponse["usage"]["completion_tokens"]);
-                translatedText = jsonResponse["choices"]?[0]?["message"]?["content"]?.ToString().Trim('\"');
-
-                if (translatedText == null)
-                {
-                    XuaLogger.AutoTranslator.Error($"SakuraTranslate.Translate: Failed to parse response, jsonResponse: {jsonResponse}");
-                    throw new System.Exception($"Failed to parse response, jsonResponse: {jsonResponse}");
-                }
-
-                if (_fixDegeneration && completionTokens == GetMaxTokens(untranslatedText))
-                {
-                    if (retryCount < DEGENERATION_MAX_RETRIES)
-                    {
-                        XuaLogger.AutoTranslator.Warn($"SakuraTranslate.Translate: Detected degeneration, retry: {retryCount + 1}/{DEGENERATION_MAX_RETRIES}, " +
-                            $"completionTokens: {completionTokens}, maxTokens: {GetMaxTokens(untranslatedText)}, untranslatedText: {untranslatedText}");
-                        frequencyPenalty += 0.2;
-                        retryCount++;
-                        continue;
-                    }
-                    else
-                    {
-                        XuaLogger.AutoTranslator.Warn($"SakuraTranslate.Translate: Failed to fix degeneration after {retryCount} retries, untranslatedText: {untranslatedText}");
-                        break;
-                    }
-                }
-                break;
+                penalty += 0.2;
+                retries++;
+                XuaLogger.AutoTranslator.Warn("SakuraTranslate: 检测到输出长度限制，重试 " + retries + "/" + DEGENERATION_MAX_RETRIES);
             }
-
-            translatedText = JsonHelper.Unescape(translatedText);
-            translatedText = TranslationHelper.FixTranslationEnd(untranslatedText, translatedText);
-
-            if (_debug) { XuaLogger.AutoTranslator.Debug($"SakuraTranslate.Translate: translatedText: {translatedText}"); }
-
-            // 提交翻译文本
-            context.Complete(translatedText);
+            translated = TranslationHelper.FixTranslationEnd(original, translated);
+            if (_debug) XuaLogger.AutoTranslator.Debug("SakuraTranslate.Translate: translatedText: " + translated);
+            context.Complete(translated);
         }
     }
 }
