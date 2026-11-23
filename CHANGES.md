@@ -23,7 +23,7 @@
 - 请求生命周期：`SakuraTranslate/Helpers/HttpRequestHelper.cs`
 - 初始化与翻译：`SakuraTranslate/Modules/Initialize.cs`、`Translate.cs`
 - 提示词与 JSON：`SakuraTranslate/Modules/Helpers/RequestHelper.cs`、`Modules/TranslateModels/MakeSakuraPromptV1_0.cs`
-- 测试：`Tests/`；逐项核查：`docs/UPSTREAM_ISSUES.md`
+- 测试：`Tests/`；模型支持范围、安装与排查说明：`README.md`
 - 发布：`.github/workflows/dotnet.yml`、`RELEASE_NOTES.md`
 
 ### 已执行验证
